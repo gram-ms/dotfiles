@@ -58,7 +58,7 @@ select_device() {
 
     local choice
     while true; do
-        read -p "Select the device number" choice
+        read -p "Select the device number: " choice
         if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#devices[@]}" ]; then
             DEVICE_ID=$(echo "${devices[$((choice-1))]}" | cut -f2)
             echo -e "${GREEN}✔ Device selected: ${DEVICE_ID}${NC}\n"
