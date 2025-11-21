@@ -21,7 +21,10 @@ decorations = "None"
 bindings = [
 { key = "F11", action = "ToggleFullscreen" },
 { key = "Insert", mods = "Shift", action = "Paste" },
-{ key = "Insert", mods = "Control", action = "Copy" }
+{ key = "Insert", mods = "Control", action = "Copy" },
+{ key = "Delete", chars = "\u001b[3~" },
+{ key = "Left",   mods = "Control", chars = "\u001b[1;5D" },
+{ key = "Right",  mods = "Control", chars = "\u001b[1;5C" }
 ]
 
 [terminal]
