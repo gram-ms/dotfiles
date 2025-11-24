@@ -1,0 +1,6 @@
+# Custom keybindings for Zsh Line Editor (ZLE)
+
+# Fixes for Alacritty/modern terminals
+bindkey "\\e[3~" delete-char      # Delete key
+bindkey "\\e[1;5D" backward-word  # Ctrl+Left
+bindkey "\\e[1;5C" forward-word  # Ctrl+Right
