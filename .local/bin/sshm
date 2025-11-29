@@ -2,7 +2,6 @@
 
 # sshm - A TUI-based SSH Connection and Filesystem Manager
 
-# --- Setup: Colors and Symbols ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -14,9 +13,7 @@ CROSS="${RED}[✖]${NC}"
 WARN="${YELLOW}[⚠]${NC}"
 INFO="${BLUE}[ℹ]${NC}"
 
-# --- Prerequisite Checks ---
-
-# 1. Check for required dependencies
+# Check dependencies
 check_dependencies() {
     local missing_deps=()
     for cmd in fzf sshfs; do
@@ -32,7 +29,7 @@ check_dependencies() {
     fi
 }
 
-# 2. Check for the existence and content of SSH config
+# Check SSH config
 check_ssh_config() {
     local config_file="$HOME/.ssh/config"
     if [ ! -f "$config_file" ]; then
@@ -46,11 +43,10 @@ check_ssh_config() {
     grep '^Host ' "$config_file" | awk '{print $2}' | grep -v '*'
 }
 
-# --- Main Logic ---
 
 main() {
     check_dependencies
-    
+
     local hosts
     hosts=$(check_ssh_config)
 
@@ -67,7 +63,6 @@ main() {
         exit 0
     fi
 
-    # --- Mount Point Configuration ---
     local mount_point_base="$HOME/servers"
     if [ ! -d "$mount_point_base" ]; then
         echo -e "${WARN} Mount directory ${YELLOW}$mount_point_base${NC} not found."
@@ -93,14 +88,11 @@ main() {
     fi
     local mount_point="$mount_point_base/$selected_host"
 
-    # --- Action Selection ---
     local action
     action=$(printf "Connect & Mount\nConnect (SSH only)\nMount (SSHFS only)\nUnmount" | fzf --prompt="Select Action for '$selected_host' > ")
 
-    # --- Action Execution ---
     case "$action" in
         "Connect & Mount")
-            # Mount first, only connect if mount succeeds
             if mountpoint -q "$mount_point"; then
                 echo -e "${WARN} Already mounted at ${YELLOW}$mount_point${NC}."
             else
@@ -114,11 +106,9 @@ main() {
                 fi
             fi
 
-            # Connect
             echo -e "${INFO} Opening SSH connection..."
             ssh "$selected_host"
 
-            # After disconnecting, ask to unmount
             if mountpoint -q "$mount_point"; then
                 read -p "Disconnect detected. Unmount from $mount_point? [y/N] " -n 1 -r
                 echo
@@ -168,5 +158,4 @@ main() {
     esac
 }
 
-# Run the main function
 main
