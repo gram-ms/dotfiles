@@ -29,7 +29,7 @@ trp() {
   trans -b :pt "$*"
 }
 
-trp() {
+trn() {
   trans -b :en "$*"
 }
 
