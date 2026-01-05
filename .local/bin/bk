@@ -4,21 +4,24 @@
 # It reads backup task definitions from individual files in the '~/.backup_tasks' directory.
 #
 # --- How to Use ---
-# 1. Define Backup Tasks:
-#    For each directory you want to backup, create a file in the '~/.backup_tasks' directory.
-#    The filename will be used as the destination sub-directory name in your external drive.
-#    Inside each file, simply put the *full path* to the source directory you want to backup.
-#    Example: To backup '/home/gramms/Documents' to '~/Extern/Backup/MyDocs':
+# This script supports two formats for task files in the '~/.backup_tasks' directory.
+#
+# 1. Simple Format (Default):
+#    The filename becomes the destination directory name inside the backup folder.
+#    The content of the file is the full path to the source directory.
+#    Example: To back up '/home/gramms/Documents' to '~/Extern/Backup/MyDocs':
 #             echo "/home/gramms/Documents" > ~/.backup_tasks/MyDocs
 #
-# 2. Run the Script:
-#    Ensure your external drive (defined by DEST_BASE_DIR) is mounted.
-#    Execute the script from your terminal: ~/.local/bin/bk
+# 2. Advanced Format (Preserve Path):
+#    To control the destination sub-path, use the format: SOURCE_PATH >> RELATIVE_DEST_PATH
+#    This is useful for backing up specific config files into a matching structure.
+#    Example: To back up '/home/gramms/.config/hypr' to '~/Extern/Backup/.config/hypr':
+#             echo "/home/gramms/.config/hypr >> .config/hypr" > ~/.backup_tasks/hypr-config
 #
-#    This script can also be automated using a systemd timer for daily execution.
+# --- Running the Script ---
+#    Execute from your terminal: ~/.local/bin/bk
 #
 
-# A modular and robust backup script using rsync.
 
 DEST_BASE_DIR="/home/gramms/Extern/Backup"
 TASKS_DIR="/home/gramms/.backup_tasks"
@@ -28,6 +31,11 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Initialize counters and lists
+success_count=0
+fail_count=0
+failed_tasks=()
 
 # Rsync Check
 if ! command -v rsync &> /dev/null
@@ -40,8 +48,18 @@ fi
 
 for task_file in "$TASKS_DIR"/*; do
     task_name=$(basename "$task_file")
-    source_dir=$(cat "$task_file")
-    dest_dir="$DEST_BASE_DIR/$task_name"
+    task_content=$(cat "$task_file")
+
+    # Check for the advanced format (source >> destination)
+    if [[ "$task_content" == *">>"* ]]; then
+        source_dir=$(echo "$task_content" | awk -F '>>' '{print $1}' | xargs)
+        relative_dest=$(echo "$task_content" | awk -F '>>' '{print $2}' | xargs)
+        dest_dir="$DEST_BASE_DIR/$relative_dest"
+    else
+        # Fallback to the simple format
+        source_dir="$task_content"
+        dest_dir="$DEST_BASE_DIR/$task_name"
+    fi
     
     echo -e "-------------------------------------"
     echo -e "${CYAN}Processing task: $task_name${NC}"
@@ -49,33 +67,62 @@ for task_file in "$TASKS_DIR"/*; do
     if [ -z "$source_dir" ]; then
         echo -e "${YELLOW}Warning: Task file '$task_name' is empty. Skipping.${NC}"
         ((fail_count++))
+        failed_tasks+=("$task_name (Task file is empty)")
         continue
     fi
     
     if [ ! -d "$source_dir" ]; then
-        echo -e "${RED}Error: Source directory '$source_dir' for task '$task_name' does not exist. Skipping.${NC}"
         ((fail_count++))
+        failed_tasks+=("$task_name (Source directory not found)")
         continue
     fi
     
     echo "  Source: $source_dir"
     echo "  Destination: $dest_dir"
     
-    rsync -ah --delete --progress "$source_dir/" "$dest_dir"
+    # Create a temporary file to log potential errors from rsync
+    error_log=$(mktemp)
+
+    # Ensure the parent directory of the destination exists
+    mkdir -p "$(dirname "$dest_dir")"
+
+    # Execute rsync, redirecting stderr to our log file
+    rsync -ah --delete --progress "$source_dir/" "$dest_dir" 2> "$error_log"
     
+    # Check the exit code of rsync
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Task '$task_name' completed successfully.${NC}"
         ((success_count++))
     else
         echo -e "${RED}Error: Task '$task_name' failed during rsync operation.${NC}"
+        # If the error log is not empty, print its content
+        if [ -s "$error_log" ]; then
+            echo -e "${YELLOW}Reason:${NC}"
+            # Indent the error message for better readability
+            sed 's/^/  /' "$error_log"
+            # Capture the primary error to show in the final summary
+            reason=$(head -n 1 "$error_log")
+        fi
         ((fail_count++))
+        failed_tasks+=("$task_name (Rsync failed: ${reason:-Unknown error})")
     fi
+
+    # Clean up the temporary error log
+    rm -f "$error_log"
 done
 
 echo -e "-------------------------------------"
 echo -e "${CYAN}Backup process finished.${NC}"
 echo -e "${GREEN}Successful tasks: $success_count${NC}"
 echo -e "${RED}Failed tasks: $fail_count${NC}"
+
+# If there were failures, print a detailed summary of which tasks failed
+if (( fail_count > 0 )); then
+    echo -e "${YELLOW}The following tasks failed:${NC}"
+    for task in "${failed_tasks[@]}"; do
+        echo -e "  - $task"
+    done
+fi
 
 if (( fail_count > 0 )); then
     exit 1
