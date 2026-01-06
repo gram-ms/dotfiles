@@ -29,6 +29,10 @@ trp() {
   trans -b :pt "$*"
 }
 
+trpp() {
+  trans :pt "$*"
+}
+
 trn() {
   trans -b :en "$*"
 }

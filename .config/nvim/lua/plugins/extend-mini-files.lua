@@ -1,5 +1,10 @@
 return {
   "nvim-mini/mini.files",
+  opts = {
+    windows = {
+      width_preview = 80,
+    },
+  },
   keys = {
     {
       "<leader>e",
