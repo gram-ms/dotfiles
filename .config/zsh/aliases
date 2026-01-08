@@ -30,7 +30,7 @@ trp() {
 }
 
 trpp() {
-  trans :pt "$*"
+  trans en:pt "$*"
 }
 
 trn() {

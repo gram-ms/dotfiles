@@ -2,7 +2,7 @@ return {
   "nvim-mini/mini.files",
   opts = {
     windows = {
-      width_preview = 80,
+      width_preview = 50,
     },
   },
   keys = {
