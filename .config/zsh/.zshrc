@@ -20,3 +20,6 @@ export NVM_DIR="$HOME/.config/nvm"
 
 
 . "$HOME/.local/share/../bin/env"
+
+eval "$(zoxide init zsh)"
+export PATH=$PATH:$(go env GOPATH)/bin
