@@ -19,7 +19,10 @@ export NVM_DIR="$HOME/.config/nvm"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
 
+<<<<<<< HEAD
 . "$HOME/.local/share/../bin/env"
 
 eval "$(zoxide init zsh)"
 export PATH=$PATH:$(go env GOPATH)/bin
+=======
+>>>>>>> refs/remotes/origin/main

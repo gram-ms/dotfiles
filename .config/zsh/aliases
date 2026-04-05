@@ -3,7 +3,7 @@ alias mondp="sudo ddcutil -d 1 setvcp 60 0x0F"
 
 alias sgpt='docker run --rm -e OPENAI_API_BASE=${OPENAI_API_BASE} -e OPENAI_API_KEY=${OPENROUTER_API_KEY} ghcr.io/tbckr/sgpt:latest txt '
 
-# general use
+# exa use
 alias ls='exa'                                                          # ls
 alias l='exa -lbF --git'                                                # list, size, type, git
 alias ll='exa -lbGF --git'                                             # long list
@@ -40,6 +40,8 @@ trn() {
   trans -b :en "$*"
 }
 
+
+# Activate python venv
 avenv() {
     local dir="$PWD"
 
@@ -56,3 +58,8 @@ avenv() {
     return 1
 }
 
+# OpenClaude
+alias openclaude='export CLAUDE_CODE_USE_OPENAI=1 && \
+export OPENAI_BASE_URL="https://openrouter.ai/api/v1" && \
+export OPENAI_MODEL="qwen/qwen3.6-plus:free" && \
+openclaude'
