@@ -1,21 +1,29 @@
 #!/bin/bash
 
-# sshm - A TUI-based SSH Connection and Filesystem Manager
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+BOLD='\033[1m'
+NC='\033[0m'
 
-TICK="${GREEN}[✔]${NC}"
-CROSS="${RED}[✖]${NC}"
-WARN="${YELLOW}[⚠]${NC}"
-INFO="${BLUE}[ℹ]${NC}"
+TICK="${GREEN}[OK]${NC}"
+CROSS="${RED}[ERROR]${NC}"
+WARN="${YELLOW}[WARN]${NC}"
+INFO="${BLUE}[INFO]${NC}"
 
-# Check dependencies
+SSH_DIR="$HOME/.ssh"
+SSH_CONFIG="$SSH_DIR/config"
+MOUNT_BASE="$HOME/servers"
+
+print_header() {
+    echo -e "${BOLD}${BLUE}sshm${NC} - SSH Connection and Filesystem Manager"
+    echo -e "${BLUE}---------------------------------------------${NC}"
+}
+
 check_dependencies() {
     local missing_deps=()
+
     for cmd in fzf sshfs; do
         if ! command -v "$cmd" &> /dev/null; then
             missing_deps+=("$cmd")
@@ -23,135 +31,208 @@ check_dependencies() {
     done
 
     if [ ${#missing_deps[@]} -ne 0 ]; then
-        echo -e "${CROSS} Error: Missing required dependencies: ${RED}${missing_deps[*]}${NC}"
-        echo -e "${INFO} Please install them using your system's package manager (e.g., 'sudo pacman -S fzf sshfs')."
+        echo -e "${CROSS} Missing required dependencies: ${RED}${missing_deps[*]}${NC}"
+        echo -e "${INFO} Install them with your system package manager, for example: sudo pacman -S fzf sshfs"
         exit 1
     fi
 }
 
-# Check SSH config
-check_ssh_config() {
-    local config_file="$HOME/.ssh/config"
-    if [ ! -f "$config_file" ]; then
-        echo -e "${CROSS} Error: SSH config file not found at ${YELLOW}$config_file${NC}"
-        echo -e "${INFO} Create one with host entries like this:\n"
-        echo -e "Host my-server\n    HostName 192.168.1.100\n    User myuser\n"
-        exit 1
-    fi
-
-    # Grep for hosts, excluding wildcard hosts
-    grep '^Host ' "$config_file" | awk '{print $2}' | grep -v '*'
+get_ssh_hosts() {
+    [ -f "$SSH_CONFIG" ] || return 0
+    awk '/^[[:space:]]*Host[[:space:]]+/ { for (i = 2; i <= NF; i++) if ($i != "*") print $i }' "$SSH_CONFIG"
 }
 
+prompt_yes_no() {
+    local prompt="$1"
+    local answer
+
+    read -rp "$prompt [y/N] " answer
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+ensure_ssh_config() {
+    if [ ! -d "$SSH_DIR" ]; then
+        mkdir -p "$SSH_DIR"
+        chmod 700 "$SSH_DIR"
+        echo -e "${TICK} Created ${GREEN}$SSH_DIR${NC}." >&2
+    fi
+
+    if [ ! -f "$SSH_CONFIG" ]; then
+        touch "$SSH_CONFIG"
+        chmod 600 "$SSH_CONFIG"
+        echo -e "${TICK} Created ${GREEN}$SSH_CONFIG${NC}." >&2
+    fi
+}
+
+read_required_value() {
+    local prompt="$1"
+    local value
+
+    while true; do
+        read -rp "$prompt" value
+        if [ -n "$value" ]; then
+            printf '%s' "$value"
+            return 0
+        fi
+        echo -e "${WARN} This field is required." >&2
+    done
+}
+
+add_ssh_host() {
+    local host_alias host_name ssh_user ssh_port identity_file
+
+    ensure_ssh_config
+
+    echo >&2
+    echo -e "${INFO} Add a new SSH host. Leave optional fields blank to skip them." >&2
+
+    host_alias=$(read_required_value "Host alias: ")
+    host_name=$(read_required_value "HostName or IP: ")
+
+    read -rp "User [$USER]: " ssh_user
+    ssh_user=${ssh_user:-$USER}
+
+    read -rp "Port [22]: " ssh_port
+    ssh_port=${ssh_port:-22}
+
+    read -erp "IdentityFile (optional): " identity_file
+    identity_file=${identity_file/#\~/$HOME}
+
+    {
+        printf '\nHost %s\n' "$host_alias"
+        printf '    HostName %s\n' "$host_name"
+        printf '    User %s\n' "$ssh_user"
+        printf '    Port %s\n' "$ssh_port"
+        if [ -n "$identity_file" ]; then
+            printf '    IdentityFile %s\n' "$identity_file"
+        fi
+    } >> "$SSH_CONFIG"
+
+    chmod 600 "$SSH_CONFIG"
+    echo -e "${TICK} Host ${GREEN}$host_alias${NC} saved to ${GREEN}$SSH_CONFIG${NC}." >&2
+}
+
+select_host() {
+    local hosts
+
+    hosts=$(get_ssh_hosts)
+    while [ -z "$hosts" ]; do
+        echo -e "${WARN} No SSH hosts found in ${YELLOW}$SSH_CONFIG${NC}." >&2
+        if prompt_yes_no "Add a host now?"; then
+            add_ssh_host
+            hosts=$(get_ssh_hosts)
+        else
+            echo "No host configured. Exiting." >&2
+            exit 0
+        fi
+    done
+
+    printf '%s\n' "$hosts" | fzf --height=30% --reverse --border --prompt="Select SSH host > "
+}
+
+select_mount_base() {
+    local custom_mount_base
+
+    if [ -d "$MOUNT_BASE" ]; then
+        printf '%s' "$MOUNT_BASE"
+        return 0
+    fi
+
+    echo -e "${WARN} Mount directory ${YELLOW}$MOUNT_BASE${NC} not found." >&2
+    if prompt_yes_no "Create it now?"; then
+        mkdir -p "$MOUNT_BASE"
+        echo -e "${TICK} Directory created." >&2
+        printf '%s' "$MOUNT_BASE"
+        return 0
+    fi
+
+    while true; do
+        read -erp "Enter a writable directory for SSHFS mounts: " custom_mount_base
+        custom_mount_base=${custom_mount_base/#\~/$HOME}
+
+        if [ -d "$custom_mount_base" ] && [ -w "$custom_mount_base" ]; then
+            echo -e "${TICK} Using ${GREEN}$custom_mount_base${NC} for mounts." >&2
+            printf '%s' "$custom_mount_base"
+            return 0
+        fi
+
+        echo -e "${CROSS} Directory ${RED}$custom_mount_base${NC} is not valid or not writable." >&2
+    done
+}
+
+mount_host() {
+    local selected_host="$1"
+    local mount_point="$2"
+
+    if mountpoint -q "$mount_point"; then
+        echo -e "${WARN} Already mounted at ${YELLOW}$mount_point${NC}."
+        return 0
+    fi
+
+    mkdir -p "$mount_point"
+    if sshfs "$selected_host":/ "$mount_point" -o reconnect,ServerAliveInterval=15,ServerAliveCountMax=3; then
+        echo -e "${TICK} Host mounted at ${GREEN}$mount_point${NC}."
+        return 0
+    fi
+
+    echo -e "${CROSS} Failed to mount host. Check permissions or SSH connectivity."
+    rmdir "$mount_point" 2> /dev/null
+    return 1
+}
+
+unmount_host() {
+    local mount_point="$1"
+
+    if ! mountpoint -q "$mount_point"; then
+        echo -e "${WARN} Not currently mounted at ${YELLOW}$mount_point${NC}."
+        return 0
+    fi
+
+    if umount "$mount_point"; then
+        echo -e "${TICK} Unmounted successfully."
+        return 0
+    fi
+
+    echo -e "${CROSS} Failed to unmount. The mount may be in use."
+    return 1
+}
 
 main() {
+    local selected_host mount_point_base mount_point action
+
+    print_header
     check_dependencies
 
-    local hosts
-    hosts=$(check_ssh_config)
-
-    if [ -z "$hosts" ]; then
-        echo -e "${CROSS} Error: No valid hosts found in ${YELLOW}$HOME/.ssh/config${NC}"
-        exit 1
-    fi
-
-    local selected_host
-    selected_host=$(echo "$hosts" | fzf --height=20% --reverse --prompt="Select SSH Host > ")
-
+    selected_host=$(select_host)
     if [ -z "$selected_host" ]; then
         echo "No host selected. Exiting."
         exit 0
     fi
 
-    local mount_point_base="$HOME/servers"
-    if [ ! -d "$mount_point_base" ]; then
-        echo -e "${WARN} Mount directory ${YELLOW}$mount_point_base${NC} not found."
-        read -p "Create it now? [y/N] " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            mkdir -p "$mount_point_base"
-            echo -e "${TICK} Directory created."
-        else
-            while true; do
-                read -ep "Enter a valid directory for sshfs mounts: " custom_mount_base
-                # Expand tilde
-                custom_mount_base="${custom_mount_base/#\~/$HOME}"
-                if [ -d "$custom_mount_base" ] && [ -w "$custom_mount_base" ]; then
-                    mount_point_base="$custom_mount_base"
-                    echo -e "${TICK} Using ${GREEN}$mount_point_base${NC} for mounts."
-                    break
-                else
-                    echo -e "${CROSS} Error: Directory ${RED}$custom_mount_base${NC} is not valid or not writable."
-                fi
-            done
-        fi
-    fi
-    local mount_point="$mount_point_base/$selected_host"
+    mount_point_base=$(select_mount_base)
+    mount_point="$mount_point_base/$selected_host"
 
-    local action
-    action=$(printf "Connect & Mount\nConnect (SSH only)\nMount (SSHFS only)\nUnmount" | fzf --prompt="Select Action for '$selected_host' > ")
+    action=$(printf "Connect and mount\nConnect with SSH only\nMount with SSHFS only\nUnmount" | fzf --height=30% --reverse --border --prompt="Action for '$selected_host' > ")
 
     case "$action" in
-        "Connect & Mount")
-            if mountpoint -q "$mount_point"; then
-                echo -e "${WARN} Already mounted at ${YELLOW}$mount_point${NC}."
-            else
-                mkdir -p "$mount_point"
-                if sshfs "$selected_host":/ "$mount_point" -o reconnect,ServerAliveInterval=15,ServerAliveCountMax=3; then
-                    echo -e "${TICK} Host mounted at ${GREEN}$mount_point${NC}."
-                else
-                    echo -e "${CROSS} Error: Failed to mount host. Check permissions or SSH connection."
-                    rmdir "$mount_point" # Clean up empty dir
-                    exit 1
-                fi
-            fi
-
+        "Connect and mount")
+            mount_host "$selected_host" "$mount_point" || exit 1
             echo -e "${INFO} Opening SSH connection..."
             ssh "$selected_host"
 
-            if mountpoint -q "$mount_point"; then
-                read -p "Disconnect detected. Unmount from $mount_point? [y/N] " -n 1 -r
-                echo
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
-                    if umount "$mount_point"; then
-                         echo -e "${TICK} Unmounted successfully."
-                    else
-                         echo -e "${CROSS} Error: Failed to unmount. It may be in use."
-                    fi
-                fi
+            if mountpoint -q "$mount_point" && prompt_yes_no "Disconnect detected. Unmount from $mount_point?"; then
+                unmount_host "$mount_point"
             fi
             ;;
-
-        "Connect (SSH only)")
+        "Connect with SSH only")
             ssh "$selected_host"
             ;;
-
-        "Mount (SSHFS only)")
-            if mountpoint -q "$mount_point"; then
-                echo -e "${WARN} Already mounted at ${YELLOW}$mount_point${NC}."
-            else
-                mkdir -p "$mount_point"
-                if sshfs "$selected_host":/ "$mount_point" -o reconnect,ServerAliveInterval=15,ServerAliveCountMax=3; then
-                    echo -e "${TICK} Host mounted at ${GREEN}$mount_point${NC}."
-                else
-                    echo -e "${CROSS} Error: Failed to mount host."
-                    rmdir "$mount_point"
-                fi
-            fi
+        "Mount with SSHFS only")
+            mount_host "$selected_host" "$mount_point"
             ;;
-
         "Unmount")
-            if mountpoint -q "$mount_point"; then
-                if umount "$mount_point"; then
-                    echo -e "${TICK} Unmounted successfully."
-                else
-                    echo -e "${CROSS} Error: Failed to unmount. It may be in use."
-                fi
-            else
-                echo -e "${WARN} Not currently mounted at ${YELLOW}$mount_point${NC}."
-            fi
+            unmount_host "$mount_point"
             ;;
-
         *)
             echo "No action selected. Exiting."
             ;;
